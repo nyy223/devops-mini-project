@@ -1,0 +1,16 @@
+# Credentials & secrets
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# SSH keys
+ssh-key/
+
+# Terraform state (berisi info sensitif)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Crash logs
+crash.log
