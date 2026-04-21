@@ -9,7 +9,7 @@ const userRoutes = require('./routes/users');
 const productRoutes = require('./routes/products');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(express.json());
