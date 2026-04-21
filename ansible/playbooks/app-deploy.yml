@@ -9,9 +9,9 @@
     app_service_name: devops-app
     app_image: trenttzzz/devops-app:latest
     app_container_name: devops-app
-    app_container_port: 3000
+    app_container_port: 3001
     app_public_port: 3001
-    app_metrics_port: 9091
+    app_metrics_port: 3001
     node_exporter_service_name: prometheus-node-exporter
 
   handlers:

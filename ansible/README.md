@@ -12,7 +12,7 @@
 
 > VM sudah diprovision dengan Terraform.
 
-- `app_node`: deploy aplikasi Node.js, expose app di port `3001`, expose metrics internal di port `9091`, dan aktifkan Node Exporter di port `9100`
+- `app_node`: deploy aplikasi Node.js, expose app di port `3001`, expose endpoint metrics aplikasi di port yang sama (`3001/metrics`), dan aktifkan Node Exporter di port `9100`
 - `monitoring_node`: siapkan Docker Engine, Docker Compose plugin, dan firewall untuk Grafana/Prometheus/Alertmanager
 
 ## Struktur Folder
@@ -93,8 +93,8 @@ ansible-playbook playbooks/app-deploy.yml
 
 - install `prometheus-node-exporter`
 - buat Docker Compose file untuk image `trenttzzz/devops-app:latest`
-- map port host `3001 -> 3000` untuk akses publik aplikasi
-- map port host `9091 -> 3000` untuk scraping metrics internal oleh Prometheus
+- jalankan aplikasi di port `3001`
+- expose endpoint aplikasi dan metrics melalui port host yang sama, yaitu `3001`
 - buat systemd unit `devops-app.service`
 - validasi `docker`, `devops-app`, dan `prometheus-node-exporter` dalam kondisi running
 - validasi endpoint `/health`, `/metrics`, dan Node Exporter metrics
@@ -119,7 +119,9 @@ Untuk validasi service dari control machine, bisa juga jalankan:
 
 ```bash
 ansible app_node -m shell -a "systemctl is-active docker devops-app prometheus-node-exporter"
-ansible app_node -m shell -a "curl -fsS http://127.0.0.1:3001/health && curl -fsS http://127.0.0.1:9091/metrics >/dev/null"
+ansible app_node -m shell -a "curl -fsS http://127.0.0.1:3001/health && curl -fsS http://127.0.0.1:3001/metrics >/dev/null"
 ```
 
-![alt text](assets/image.png)
+![alt text](../docs/screenshots/image.png)
+
+![alt text](../docs/screenshots/image2.png)

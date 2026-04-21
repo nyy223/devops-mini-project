@@ -8,7 +8,9 @@ services:
       NODE_ENV: production
     ports:
       - "{{ app_public_port }}:{{ app_container_port }}"
+{% if app_metrics_port != app_public_port %}
       - "{{ app_metrics_port }}:{{ app_container_port }}"
+{% endif %}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:{{ app_container_port }}/health"]
       interval: 30s
