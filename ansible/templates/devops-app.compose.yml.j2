@@ -1,0 +1,17 @@
+services:
+  app:
+    image: {{ app_image }}
+    container_name: {{ app_container_name }}
+    restart: unless-stopped
+    environment:
+      PORT: "{{ app_container_port }}"
+      NODE_ENV: production
+    ports:
+      - "{{ app_public_port }}:{{ app_container_port }}"
+      - "{{ app_metrics_port }}:{{ app_container_port }}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:{{ app_container_port }}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

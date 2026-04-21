@@ -19,3 +19,5 @@ ssh-key/
 
 # Crash logs
 crash.log
+
+devops-project.pem

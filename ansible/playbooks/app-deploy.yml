@@ -1,0 +1,137 @@
+---
+- name: Deploy application stack and exporters
+  hosts: app_node
+  become: true
+  gather_facts: true
+  vars:
+    app_root: /opt/devops-app
+    app_compose_file: "{{ app_root }}/docker-compose.yml"
+    app_service_name: devops-app
+    app_image: trenttzzz/devops-app:latest
+    app_container_name: devops-app
+    app_container_port: 3000
+    app_public_port: 3001
+    app_metrics_port: 9091
+    node_exporter_service_name: prometheus-node-exporter
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart application service
+      ansible.builtin.systemd:
+        name: "{{ app_service_name }}"
+        state: restarted
+
+  tasks:
+    - name: Install Node Exporter package
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure Node Exporter is enabled and running
+      ansible.builtin.service:
+        name: "{{ node_exporter_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_root }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Render Docker Compose definition for the app
+      ansible.builtin.template:
+        src: ../templates/devops-app.compose.yml.j2
+        dest: "{{ app_compose_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart application service
+
+    - name: Render systemd unit for the application stack
+      ansible.builtin.template:
+        src: ../templates/devops-app.service.j2
+        dest: "/etc/systemd/system/{{ app_service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart application service
+
+    - name: Apply pending handler changes before validation
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure application service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ app_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Check Docker service state
+      ansible.builtin.command: systemctl is-active docker
+      register: docker_service_status
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Check application service state
+      ansible.builtin.command: "systemctl is-active {{ app_service_name }}"
+      register: app_service_status
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Check Node Exporter service state
+      ansible.builtin.command: "systemctl is-active {{ node_exporter_service_name }}"
+      register: node_exporter_service_status
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Verify required services are active
+      ansible.builtin.assert:
+        that:
+          - docker_service_status.stdout == 'active'
+          - app_service_status.stdout == 'active'
+          - node_exporter_service_status.stdout == 'active'
+        fail_msg: One or more required services are not active on the application node.
+      when: not ansible_check_mode
+
+    - name: Wait for application health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_public_port }}/health"
+        method: GET
+        status_code: 200
+        return_content: true
+      register: app_health_result
+      retries: 10
+      delay: 5
+      until: app_health_result.status == 200
+      when: not ansible_check_mode
+
+    - name: Wait for application metrics endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ app_metrics_port }}/metrics"
+        method: GET
+        status_code: 200
+      register: app_metrics_result
+      retries: 10
+      delay: 5
+      until: app_metrics_result.status == 200
+      when: not ansible_check_mode
+
+    - name: Wait for Node Exporter metrics endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9100/metrics"
+        method: GET
+        status_code: 200
+      register: node_exporter_result
+      retries: 10
+      delay: 5
+      until: node_exporter_result.status == 200
+      when: not ansible_check_mode
