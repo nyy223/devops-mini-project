@@ -1,0 +1,241 @@
+---
+- name: Install Docker Engine and shared prerequisites
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_apt_arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: armhf
+    docker_apt_arch: "{{ docker_apt_arch_map.get(ansible_facts['architecture'], ansible_facts['architecture']) }}"
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+
+  tasks:
+    - name: Install operating system prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - ufw
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure Docker apt keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Download Docker apt signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Configure Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ docker_apt_arch }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable"
+        filename: docker
+        state: present
+        update_cache: true
+
+    - name: Check whether Docker repository file already exists
+      ansible.builtin.stat:
+        path: /etc/apt/sources.list.d/docker.list
+      register: docker_repo_file
+
+    - name: Explain Docker package install behavior in check mode
+      ansible.builtin.debug:
+        msg: Docker repository was only simulated in check mode, so package installation is skipped on this first dry-run.
+      when:
+        - ansible_check_mode
+        - not docker_repo_file.stat.exists
+
+    - name: Check interrupted dpkg state before Docker installation
+      ansible.builtin.command: dpkg --audit
+      register: dpkg_audit
+      changed_when: false
+      failed_when: false
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Repair any interrupted dpkg state before Docker installation
+      ansible.builtin.command: dpkg --configure -a
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+        - dpkg_audit.stdout | trim != ""
+
+    - name: Remove distro Docker Compose packages that conflict with Docker CE plugin
+      ansible.builtin.apt:
+        name:
+          - docker-compose
+          - docker-compose-v2
+        state: absent
+        purge: true
+        autoremove: true
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Check apt dependency health before Docker installation
+      ansible.builtin.command: apt-get check
+      register: apt_dependency_check
+      changed_when: false
+      failed_when: false
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Fix broken apt dependencies before Docker installation
+      ansible.builtin.apt:
+        state: fixed
+        update_cache: true
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+        - apt_dependency_check.rc != 0
+
+    - name: Install Docker Engine and Compose plugin
+      ansible.builtin.apt:
+        name: "{{ docker_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Ensure Docker service is enabled and running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Add remote user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: true
+      when:
+        - not ansible_check_mode or docker_repo_file.stat.exists
+
+    - name: Collect service states after Docker installation
+      ansible.builtin.service_facts:
+      when: not ansible_check_mode
+
+    - name: Verify Docker service is active
+      ansible.builtin.assert:
+        that:
+          - "'docker.service' in ansible_facts.services"
+          - ansible_facts.services['docker.service'].state == 'running'
+        fail_msg: Docker service is not running after dependency installation.
+      when: not ansible_check_mode
+
+    - name: Verify Docker Compose plugin is available
+      ansible.builtin.command: docker compose version
+      register: docker_compose_version
+      changed_when: false
+      when: not ansible_check_mode
+
+- name: Configure firewall on application node
+  hosts: app_node
+  become: true
+  gather_facts: false
+  vars:
+    ufw_rules:
+      - command: ufw allow OpenSSH
+        match: OpenSSH
+      - command: ufw allow 3001/tcp
+        match: 3001/tcp
+      - command: ufw allow from {{ vnet_cidr }} to any port 9091 proto tcp
+        match: 9091/tcp
+      - command: ufw allow from {{ vnet_cidr }} to any port 9100 proto tcp
+        match: 9100/tcp
+
+  tasks:
+    - name: Read current UFW verbose status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status_verbose
+      changed_when: false
+      failed_when: false
+
+    - name: Set default UFW policies
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - ufw default deny incoming
+        - ufw default allow outgoing
+      when: "'Default: deny (incoming), allow (outgoing)' not in ufw_status_verbose.stdout"
+
+    - name: Read current UFW rules
+      ansible.builtin.command: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Apply application node firewall rules
+      ansible.builtin.command: "{{ item.command }}"
+      loop: "{{ ufw_rules }}"
+      register: ufw_rule_result
+      changed_when: "'Skipping adding existing rule' not in ufw_rule_result.stdout"
+      when: item.match not in ufw_status.stdout
+
+    - name: Enable UFW on application node
+      ansible.builtin.command: ufw --force enable
+      when: "'Status: active' not in ufw_status_verbose.stdout"
+
+- name: Configure firewall on monitoring node
+  hosts: monitoring_node
+  become: true
+  gather_facts: false
+  vars:
+    ufw_rules:
+      - command: ufw allow OpenSSH
+        match: OpenSSH
+      - command: ufw allow 3000/tcp
+        match: 3000/tcp
+      - command: ufw allow from {{ vnet_cidr }} to any port 9090 proto tcp
+        match: 9090/tcp
+      - command: ufw allow from {{ vnet_cidr }} to any port 9093 proto tcp
+        match: 9093/tcp
+
+  tasks:
+    - name: Read current UFW verbose status
+      ansible.builtin.command: ufw status verbose
+      register: ufw_status_verbose
+      changed_when: false
+      failed_when: false
+
+    - name: Set default UFW policies
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - ufw default deny incoming
+        - ufw default allow outgoing
+      when: "'Default: deny (incoming), allow (outgoing)' not in ufw_status_verbose.stdout"
+
+    - name: Read current UFW rules
+      ansible.builtin.command: ufw status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Apply monitoring node firewall rules
+      ansible.builtin.command: "{{ item.command }}"
+      loop: "{{ ufw_rules }}"
+      register: ufw_rule_result
+      changed_when: "'Skipping adding existing rule' not in ufw_rule_result.stdout"
+      when: item.match not in ufw_status.stdout
+
+    - name: Enable UFW on monitoring node
+      ansible.builtin.command: ufw --force enable
+      when: "'Status: active' not in ufw_status_verbose.stdout"
