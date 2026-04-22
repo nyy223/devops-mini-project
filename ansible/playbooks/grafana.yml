@@ -118,6 +118,32 @@
           - grafana_service_status.stdout == 'active'
         fail_msg: Grafana stack is not active on the monitoring node.
 
+    - name: Reconcile Grafana compose runtime
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args:
+        chdir: "{{ grafana_root }}"
+      register: grafana_compose_up
+      changed_when: >
+        ('Creating' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+        or ('Created' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+        or ('Starting' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+        or ('Started' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+        or ('Recreating' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+        or ('Recreated' in ((grafana_compose_up.stdout | default('')) ~ (grafana_compose_up.stderr | default(''))))
+
+    - name: Inspect Grafana container state
+      ansible.builtin.command: docker container inspect grafana
+      register: grafana_container_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Verify Grafana container is running
+      ansible.builtin.assert:
+        that:
+          - grafana_container_inspect.rc == 0
+          - (grafana_container_inspect.stdout | from_json | first).State.Running
+        fail_msg: Grafana container is not running after compose reconciliation.
+
     - name: Wait for Grafana API health endpoint
       ansible.builtin.uri:
         url: http://127.0.0.1:3000/api/health

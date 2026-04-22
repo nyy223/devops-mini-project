@@ -250,6 +250,8 @@ Local port forwarding:
 ssh -i devops-project.pem -L 9090:localhost:9090 azureuser@20.205.153.210
 ```
 
+![alt text](../docs/screenshots/image9.png)
+
 ![text](../docs/screenshots/image3.png) 
 
 ![text](../docs/screenshots/image4.png) 
@@ -317,6 +319,8 @@ ansible monitoring_node -m shell -a "curl -u admin:admin -fsS 'http://127.0.0.1:
 - Default credential (sesuai playbook saat ini):
     - Username: `admin`
     - Password: `admin`
+
+![alt text](../docs/screenshots/image10.png)
 
 ![text](../docs/screenshots/image6.png) 
 
