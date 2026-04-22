@@ -31,6 +31,22 @@
     - [Monitoring Node — Ports yang Dibuka](#monitoring-node--ports-yang-dibuka)
   - [Cara Menjalankan Ulang Terraform](#cara-menjalankan-ulang-terraform)
   - [Cara Menghapus Semua Resources](#cara-menghapus-semua-resources)
+  - [Deployment Otomatis dengan Ansible](#deployment-otomatis-dengan-ansible)
+    - [Struktur Folder Ansible](#struktur-folder-ansible)
+    - [Prerequisites](#prerequisites)
+    - [Struktur Inventory](#struktur-inventory)
+    - [Cara Menjalankan Playbook](#cara-menjalankan-playbook)
+    - [Ringkasan Fungsi Tiap Playbook](#ringkasan-fungsi-tiap-playbook)
+    - [Testing](#testing)
+  - [Prometheus dan Monitoring](#prometheus-dan-monitoring)
+    - [Scope Implementasi](#scope-implementasi)
+    - [Mapping Deliverables](#mapping-deliverables)
+    - [Validasi Monitoring](#validasi-monitoring)
+  - [Grafana Dashboard dan Integrasi](#grafana-dashboard-dan-integrasi)
+    - [Scope Implementasi](#scope-implementasi-1)
+    - [Mapping Deliverables](#mapping-deliverables-1)
+    - [Validasi Grafana](#validasi-grafana)
+    - [Akses Grafana](#akses-grafana)
   - [Troubleshooting](#troubleshooting)
     - [SSH: "Permission denied (publickey)"](#ssh-permission-denied-publickey)
     - [SSH: "Connection timed out"](#ssh-connection-timed-out)
@@ -187,7 +203,6 @@ ssh monitoring-node
 ---
 
 
-
 ## Cara Menjalankan Ulang Terraform
 
 Jika ada perubahan konfigurasi infrastruktur yang diperlukan:
@@ -226,6 +241,282 @@ Semua resources di Azure (VM, VNet, NSG, Public IP, dll) akan dihapus dalam ~5 m
 
 ---
 
+## Deployment Otomatis dengan Ansible
+
+Semua deployment aplikasi, monitoring stack, dan provisioning Grafana dijalankan dari control machine menggunakan Ansible.
+
+- `app_node`: deploy aplikasi Node.js di port `3001`, expose endpoint metrics aplikasi (`/metrics`), dan aktifkan Node Exporter (`9100`).
+- `monitoring_node`: siapkan Docker Engine, Docker Compose plugin, lalu deploy Prometheus, Alertmanager, dan Grafana.
+
+### Struktur Folder Ansible
+
+```text
+ansible/
+├── ansible.cfg
+├── inventory.ini
+├── playbooks/
+│   ├── dependencies.yml
+│   ├── monitoring.yml
+│   ├── app-deploy.yml
+│   └── grafana.yml
+├── templates/
+│   ├── devops-app.compose.yml.j2
+│   ├── monitoring.compose.yml.j2
+│   ├── monitoring-stack.service.j2
+│   ├── grafana.compose.yml.j2
+│   ├── grafana.service.j2
+│   └── devops-app.service.j2
+├── files/
+│   ├── prometheus/
+│   ├── alertmanager/
+│   └── grafana/
+└── roles/
+```
+
+### Prerequisites
+
+Install Ansible di control machine:
+
+```bash
+pip install ansible
+```
+
+### Struktur Inventory
+
+Inventory statis menggunakan dua grup host:
+
+- `app_node`
+- `monitoring_node`
+
+Host aktif saat ini mengikuti output Terraform:
+
+- Application Node: `4.193.141.181`
+- Monitoring Node: `20.205.153.210`
+
+Jika Terraform dijalankan ulang dan IP berubah, perbarui `ansible/inventory.ini`.
+
+### Cara Menjalankan Playbook
+
+Jalankan dari root project:
+
+```bash
+cd ansible
+
+# Uji koneksi SSH
+ansible all -m ping
+
+# Dependency seluruh node
+ansible-playbook playbooks/dependencies.yml
+
+# Deploy aplikasi ke app_node
+ansible-playbook playbooks/app-deploy.yml
+
+# Deploy Prometheus + Alertmanager ke monitoring_node
+ansible-playbook playbooks/monitoring.yml
+
+# Deploy Grafana + provisioning dashboard/datasource
+ansible-playbook playbooks/grafana.yml
+```
+
+![text](docs/screenshots/ansibleping.png) 
+
+![text](docs/screenshots/ansibledependency.png) 
+
+![text](docs/screenshots/ansibledeploy.png)
+
+![text](docs/screenshots/ansiblemonitoring.png)
+
+![text](docs/screenshots/ansiblegrafana.png) 
+
+![text](docs/screenshots/appproducts.png) 
+
+![text](docs/screenshots/appmetrics.png)
+
+### Ringkasan Fungsi Tiap Playbook
+
+`playbooks/dependencies.yml`
+
+- install Docker Engine
+- install Docker Compose plugin (`docker compose`)
+- tambah user `azureuser` ke grup `docker`
+- aktifkan service Docker
+- konfigurasi UFW per role node
+
+`playbooks/app-deploy.yml`
+
+- install `prometheus-node-exporter`
+- render Docker Compose aplikasi (`trenttzzz/devops-app:latest`)
+- jalankan aplikasi di port `3001`
+- buat service systemd `devops-app.service`
+- validasi status service dan endpoint `/health`, `/metrics`, dan Node Exporter
+
+`playbooks/monitoring.yml`
+
+- install dan pastikan `prometheus-node-exporter` aktif di monitoring node
+- copy `prometheus.yml`, `alerting-rules.yml`, dan `alertmanager.yml`
+- render Docker Compose + systemd unit `monitoring-stack`
+- jalankan Prometheus + Alertmanager dengan volume persistence
+- lakukan runtime reconcile dengan `docker compose up -d --remove-orphans`
+- verifikasi container `prometheus` dan `alertmanager` benar-benar running
+- validasi health endpoint `/-/healthy` (Prometheus) dan `/-/ready` (Alertmanager)
+- validasi target scrape utama (`application`, `node_exporter`, `prometheus`, `alertmanager`) dalam status up
+
+`playbooks/grafana.yml`
+
+- siapkan direktori `/opt/grafana` (data, provisioning, dashboards)
+- copy provisioning datasource + dashboard
+- seed 3 dashboard: `app-observability`, `infrastructure-overview`, `k6-traceability`
+- render Docker Compose + systemd unit `grafana-stack`
+- lakukan runtime reconcile dengan `docker compose up -d --remove-orphans`
+- verifikasi container `grafana` benar-benar running
+- validasi Grafana health API, datasource Prometheus (`uid=prometheus`), dan jumlah dashboard terprovision
+
+### Testing
+
+Setelah deployment awal berhasil, jalankan ulang playbook berikut:
+
+```bash
+ansible-playbook playbooks/dependencies.yml
+ansible-playbook playbooks/app-deploy.yml
+ansible-playbook playbooks/monitoring.yml
+ansible-playbook playbooks/grafana.yml
+```
+
+Output yang diharapkan:
+
+```text
+changed=0
+failed=0
+```
+
+Validasi cepat dari control machine:
+
+```bash
+ansible app_node -m shell -a "systemctl is-active docker devops-app prometheus-node-exporter"
+ansible app_node -m shell -a "curl -fsS http://127.0.0.1:3001/health && curl -fsS http://127.0.0.1:3001/metrics >/dev/null"
+ansible monitoring_node -m shell -a "systemctl is-active monitoring-stack grafana-stack prometheus-node-exporter"
+ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:9090/-/healthy && curl -fsS http://127.0.0.1:9093/-/ready && curl -fsS http://127.0.0.1:3000/api/health"
+```
+
+## Prometheus dan Monitoring
+
+### Scope Implementasi
+
+1. **Prometheus configuration**
+  - Global scrape/evaluation interval dan external labels sudah dikonfigurasi.
+  - Scrape target mencakup:
+    - Prometheus server (`localhost:9090`)
+    - Alertmanager (`localhost:9093`)
+    - Application metrics (`10.0.1.10:3001/metrics`)
+    - Node Exporter di kedua VM (`10.0.1.10:9100` dan `10.0.1.20:9100`)
+2. **Deployment via Ansible + Docker Compose**
+  - Prometheus dan Alertmanager dideploy menggunakan template Compose.
+  - Data persistence disiapkan pada:
+    - `/opt/monitoring/prometheus/data`
+    - `/opt/monitoring/alertmanager/data`
+  - Retention policy Prometheus aktif melalui argumen `--storage.tsdb.retention.time` (default `15d`).
+3. **Alerting rules**
+  - Rule infrastruktur: high CPU usage dan low memory available.
+  - Rule aplikasi: high response latency (p95) dan high error rate (5xx).
+4. **Alertmanager setup**
+  - Receiver default aktif (`default-log`).
+  - Template integrasi Telegram/Slack disiapkan sebagai referensi nilai tambah.
+
+### Mapping Deliverables
+
+- `prometheus.yml`: `ansible/files/prometheus/prometheus.yml`
+- `alerting-rules.yml`: `ansible/files/prometheus/alerting-rules.yml`
+- `alertmanager.yml`: `ansible/files/alertmanager/alertmanager.yml`
+- `playbook-monitoring-stack.yml`: implementasi saat ini di `ansible/playbooks/monitoring.yml`
+
+### Validasi Monitoring
+
+```bash
+# Cek status service monitoring
+ansible monitoring_node -m shell -a "systemctl is-active monitoring-stack prometheus-node-exporter"
+
+# Cek endpoint health lokal
+ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:9090/-/healthy && curl -fsS http://127.0.0.1:9093/-/ready"
+
+# Cek scrape pool aktif
+ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:9090/api/v1/targets | jq -r '.data.activeTargets[].scrapePool'"
+```
+
+Port forwarding lokal untuk Prometheus UI:
+
+```bash
+ssh -i ~/.ssh/devops-project.pem -L 9090:localhost:9090 azureuser@20.205.153.210
+```
+
+![text](docs/screenshots/prometheusquery.png) 
+
+![text](docs/screenshots/prometheusalerts.png) 
+
+![text](docs/screenshots/prometheushealth.png) 
+
+![text](docs/screenshots/prometheusrules.png)
+
+## Grafana Dashboard dan Integrasi
+
+### Scope Implementasi
+
+1. **Grafana deployment via Ansible + Docker Compose**
+  - Service Grafana berjalan terpisah sebagai `grafana-stack` di monitoring node.
+  - Persistent storage ada di `/opt/grafana/data`.
+2. **Datasource auto-configuration**
+  - Datasource Prometheus diprovision otomatis dengan UID `prometheus`.
+3. **Dashboard provisioning otomatis**
+  - Provider file-based aktif dari path `/var/lib/grafana/dashboards`.
+  - Dashboard disinkronkan saat service start/restart.
+4. **Dashboard coverage**
+  - `app-observability`
+  - `infrastructure-overview` (termasuk panel observability Alertmanager)
+  - `k6-traceability`
+
+### Mapping Deliverables
+
+- `playbook-grafana-setup.yml`: implementasi saat ini di `ansible/playbooks/grafana.yml`
+- Dashboard JSON:
+  - `ansible/files/grafana/dashboards/app-observability.json`
+  - `ansible/files/grafana/dashboards/infrastructure-overview.json`
+  - `ansible/files/grafana/dashboards/k6-traceability.json`
+- Datasource provisioning:
+  - `ansible/files/grafana/provisioning/datasources/grafana-datasource.yml`
+- Dashboard provisioning:
+  - `ansible/files/grafana/provisioning/dashboards/grafana-dashboard-provisioning.yml`
+
+### Validasi Grafana
+
+```bash
+# Cek service Grafana
+ansible monitoring_node -m shell -a "systemctl is-active grafana-stack"
+
+# Cek health API
+ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:3000/api/health"
+
+# Cek datasource Prometheus
+ansible monitoring_node -m shell -a "curl -u admin:admin -fsS http://127.0.0.1:3000/api/datasources/name/Prometheus | jq '.uid'"
+
+# Cek jumlah dashboard ter-load
+ansible monitoring_node -m shell -a "curl -u admin:admin -fsS 'http://127.0.0.1:3000/api/search?query=' | jq '[.[] | select(.type==\"dash-db\")] | length'"
+```
+
+### Akses Grafana
+
+- URL: `http://20.205.153.210:3000`
+- Default credential:
+  - Username: `admin`
+  - Password: `admin`
+
+![text](docs/screenshots/grafanadashboard1.png) 
+
+![text](docs/screenshots/grafanadashboard2.png) 
+
+![text](docs/screenshots/grafanaalertmanager.png) 
+
+![text](docs/screenshots/grafanadashboard3.png)
+
+---
 
 ## Troubleshooting
 
@@ -277,5 +568,5 @@ az vm start --resource-group devops-monitoring-dev-rg --name devops-monitoring-m
 ```
 
 > **Catatan:** Setelah VM dinyalakan kembali, **Public IP bisa berubah** jika menggunakan Dynamic IP. Karena kita menggunakan Static IP (`allocation_method = "Static"`), IP address **tidak akan berubah**.
-
+> 
 ---
