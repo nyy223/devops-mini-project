@@ -1,11 +1,50 @@
 global:
   scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: devops-monitoring
+    environment: dev
+
+rule_files:
+  - /etc/prometheus/alerting-rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - localhost:9093
 
 scrape_configs:
-  - job_name: 'prometheus'
+  - job_name: prometheus
+    scrape_interval: 15s
     static_configs:
-      - targets: ['localhost:9090']
+      - targets:
+          - localhost:9090
+        labels:
+          node: monitoring-node
+          role: monitoring
 
-  - job_name: 'node_exporter'
+  - job_name: application
+    scrape_interval: 10s
+    metrics_path: /metrics
     static_configs:
-      - targets: ['localhost:9100'] # Monitoring server sendiri
+      - targets:
+          - 10.0.1.10:3001
+        labels:
+          node: app-node
+          role: application
+          service: devops-app
+
+  - job_name: node_exporter
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 10.0.1.10:9100
+        labels:
+          node: app-node
+          role: application
+      - targets:
+          - 10.0.1.20:9100
+        labels:
+          node: monitoring-node
+          role: monitoring

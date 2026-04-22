@@ -1,0 +1,200 @@
+---
+- name: Deploy Prometheus, Alertmanager, and monitoring config
+  hosts: monitoring_node
+  become: true
+  gather_facts: false
+  vars:
+    monitoring_root: /opt/monitoring
+    monitoring_compose_file: "{{ monitoring_root }}/docker-compose.yml"
+    monitoring_service_name: monitoring-stack
+    prometheus_root: "{{ monitoring_root }}/prometheus"
+    alertmanager_root: "{{ monitoring_root }}/alertmanager"
+    prometheus_retention_time: 15d
+    node_exporter_service_name: prometheus-node-exporter
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart monitoring stack
+      ansible.builtin.systemd:
+        name: "{{ monitoring_service_name }}"
+        state: restarted
+
+  tasks:
+    - name: Install Node Exporter package on monitoring node
+      ansible.builtin.apt:
+        name: prometheus-node-exporter
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Check Node Exporter enabled state on monitoring node
+      ansible.builtin.command: "systemctl is-enabled {{ node_exporter_service_name }}"
+      register: node_exporter_enabled_state
+      changed_when: false
+      failed_when: false
+
+    - name: Check Node Exporter active state on monitoring node
+      ansible.builtin.command: "systemctl is-active {{ node_exporter_service_name }}"
+      register: node_exporter_active_state
+      changed_when: false
+      failed_when: false
+
+    - name: Enable and start Node Exporter on monitoring node
+      ansible.builtin.command: "systemctl enable --now {{ node_exporter_service_name }}"
+      when:
+        - node_exporter_enabled_state.stdout != 'enabled'
+          or node_exporter_active_state.stdout != 'active'
+
+    - name: Create monitoring stack directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - { path: "{{ monitoring_root }}" }
+        - { path: "{{ prometheus_root }}" }
+        - { path: "{{ prometheus_root }}/data" }
+        - { path: "{{ alertmanager_root }}" }
+        - { path: "{{ alertmanager_root }}/data" }
+
+    - name: Check legacy monitoring containers
+      ansible.builtin.command: "docker container inspect {{ item }}"
+      loop:
+        - monitoring-stack-prometheus-1
+        - monitoring-stack-alertmanager-1
+      register: legacy_monitoring_containers
+      changed_when: false
+      failed_when: false
+
+    - name: Remove legacy monitoring containers
+      ansible.builtin.command: "docker rm -f {{ item.item }}"
+      loop: "{{ legacy_monitoring_containers.results }}"
+      when: item.rc == 0
+
+    - name: Copy Prometheus configuration
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '../files/prometheus/prometheus.yml', rstrip=False) }}"
+        dest: "{{ prometheus_root }}/prometheus.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart monitoring stack
+
+    - name: Copy Prometheus alerting rules
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '../files/prometheus/alerting-rules.yml', rstrip=False) }}"
+        dest: "{{ prometheus_root }}/alerting-rules.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart monitoring stack
+
+    - name: Copy Alertmanager configuration
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '../files/alertmanager/alertmanager.yml', rstrip=False) }}"
+        dest: "{{ alertmanager_root }}/alertmanager.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart monitoring stack
+
+    - name: Render monitoring Docker Compose definition
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/monitoring.compose.yml.j2') }}"
+        dest: "{{ monitoring_compose_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart monitoring stack
+
+    - name: Render monitoring systemd unit
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/monitoring-stack.service.j2') }}"
+        dest: "/etc/systemd/system/{{ monitoring_service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart monitoring stack
+
+    - name: Apply pending monitoring changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure monitoring stack service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ monitoring_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Check monitoring stack systemd state
+      ansible.builtin.command: "systemctl is-active {{ monitoring_service_name }}"
+      register: monitoring_service_status
+      changed_when: false
+      become: false
+
+    - name: Check monitoring node exporter state
+      ansible.builtin.command: "systemctl is-active {{ node_exporter_service_name }}"
+      register: monitoring_exporter_status
+      changed_when: false
+      become: false
+
+    - name: Verify monitoring services are active
+      ansible.builtin.assert:
+        that:
+          - monitoring_service_status.stdout == 'active'
+          - monitoring_exporter_status.stdout == 'active'
+        fail_msg: Monitoring stack or local Node Exporter is not active on the monitoring node.
+
+    - name: Wait for Prometheus health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9090/-/healthy
+        method: GET
+        status_code: 200
+      register: prometheus_health
+      retries: 20
+      delay: 5
+      until: prometheus_health.status == 200
+      become: false
+
+    - name: Wait for Alertmanager health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9093/-/ready
+        method: GET
+        status_code: 200
+      register: alertmanager_health
+      retries: 20
+      delay: 5
+      until: alertmanager_health.status == 200
+      become: false
+
+    - name: Fetch Prometheus target status
+      ansible.builtin.uri:
+        url: http://127.0.0.1:9090/api/v1/targets
+        method: GET
+        status_code: 200
+        return_content: true
+      register: prometheus_targets
+      retries: 20
+      delay: 5
+      until:
+        - prometheus_targets.json.status == 'success'
+        - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'application') | selectattr('health', 'equalto', 'up') | list | length) >= 1
+        - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'node_exporter') | selectattr('health', 'equalto', 'up') | list | length) >= 2
+        - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'prometheus') | selectattr('health', 'equalto', 'up') | list | length) >= 1
+      become: false
+
+    - name: Verify Prometheus scrape targets
+      ansible.builtin.assert:
+        that:
+          - prometheus_targets.json.status == 'success'
+          - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'application') | selectattr('health', 'equalto', 'up') | list | length) >= 1
+          - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'node_exporter') | selectattr('health', 'equalto', 'up') | list | length) >= 2
+          - (prometheus_targets.json.data.activeTargets | selectattr('scrapePool', 'equalto', 'prometheus') | selectattr('health', 'equalto', 'up') | list | length) >= 1
+        fail_msg: Prometheus targets are not fully healthy yet.
+      become: false

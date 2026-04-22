@@ -12,15 +12,31 @@
 
 ## Daftar Isi
 
-- [Gambaran Arsitektur](#gambaran-arsitektur)
-- [Spesifikasi VM](#spesifikasi-vm)
-- [Informasi Jaringan & IP Address](#informasi-jaringan--ip-address)
-- [Cara SSH ke VM](#cara-ssh-ke-vm)
-- [Firewall Rules (NSG)](#firewall-rules-nsg)
-- [Cara Menjalankan Ulang Terraform](#cara-menjalankan-ulang-terraform)
-- [Cara Menghapus Semua Resources](#cara-menghapus-semua-resources)
-- [Struktur File Terraform](#struktur-file-terraform)
-- [Troubleshooting](#troubleshooting)
+- [DevOps Study Case #4](#devops-study-case-4)
+  - [Anggota Kelompok](#anggota-kelompok)
+  - [Daftar Isi](#daftar-isi)
+  - [Gambaran Arsitektur](#gambaran-arsitektur)
+  - [Spesifikasi VM](#spesifikasi-vm)
+  - [Informasi Jaringan \& IP Address](#informasi-jaringan--ip-address)
+    - [IP Address](#ip-address)
+    - [URL Akses Layanan](#url-akses-layanan)
+    - [Konfigurasi Jaringan](#konfigurasi-jaringan)
+  - [Cara SSH ke VM](#cara-ssh-ke-vm)
+    - [Set Permission File Key (wajib, hanya sekali)](#set-permission-file-key-wajib-hanya-sekali)
+    - [SSH ke Application Node](#ssh-ke-application-node)
+    - [SSH ke Monitoring Node](#ssh-ke-monitoring-node)
+    - [Tips: Buat SSH Config (opsional, biar lebih praktis)](#tips-buat-ssh-config-opsional-biar-lebih-praktis)
+  - [Firewall Rules (NSG)](#firewall-rules-nsg)
+    - [Application Node — Ports yang Dibuka](#application-node--ports-yang-dibuka)
+    - [Monitoring Node — Ports yang Dibuka](#monitoring-node--ports-yang-dibuka)
+  - [Cara Menjalankan Ulang Terraform](#cara-menjalankan-ulang-terraform)
+  - [Cara Menghapus Semua Resources](#cara-menghapus-semua-resources)
+  - [Troubleshooting](#troubleshooting)
+    - [SSH: "Permission denied (publickey)"](#ssh-permission-denied-publickey)
+    - [SSH: "Connection timed out"](#ssh-connection-timed-out)
+    - [Docker: Image tidak bisa di-pull](#docker-image-tidak-bisa-di-pull)
+    - [Terraform: "Error acquiring the state lock"](#terraform-error-acquiring-the-state-lock)
+    - [Kredit Azure Hampir Habis](#kredit-azure-hampir-habis)
 
 ---
 
@@ -172,6 +188,7 @@ ssh monitoring-node
 > ```
 
 ---
+
 
 
 ## Cara Menjalankan Ulang Terraform

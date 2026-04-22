@@ -1,0 +1,168 @@
+---
+- name: Deploy Grafana with seeded provisioning
+  hosts: monitoring_node
+  become: true
+  gather_facts: false
+  vars:
+    grafana_root: /opt/grafana
+    grafana_compose_file: "{{ grafana_root }}/docker-compose.yml"
+    grafana_service_name: grafana-stack
+    grafana_admin_user: admin
+    grafana_admin_password: admin
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart grafana stack
+      ansible.builtin.systemd:
+        name: "{{ grafana_service_name }}"
+        state: restarted
+
+  tasks:
+    - name: Create Grafana directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "{{ item.mode | default('0755') }}"
+      loop:
+        - { path: "{{ grafana_root }}" }
+        - { path: "{{ grafana_root }}/data" }
+        - { path: "{{ grafana_root }}/provisioning" }
+        - { path: "{{ grafana_root }}/provisioning/datasources" }
+        - { path: "{{ grafana_root }}/provisioning/dashboards" }
+        - { path: "{{ grafana_root }}/dashboards" }
+
+    - name: Check legacy Grafana container
+      ansible.builtin.command: docker container inspect monitoring-stack-grafana-1
+      register: legacy_grafana_container
+      changed_when: false
+      failed_when: false
+
+    - name: Remove legacy Grafana container
+      ansible.builtin.command: docker rm -f monitoring-stack-grafana-1
+      when: legacy_grafana_container.rc == 0
+
+    - name: Copy Grafana datasource provisioning
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '../files/grafana/provisioning/datasources/grafana-datasource.yml', rstrip=False) }}"
+        dest: "{{ grafana_root }}/provisioning/datasources/grafana-datasource.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart grafana stack
+
+    - name: Copy Grafana dashboard provisioning
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', '../files/grafana/provisioning/dashboards/grafana-dashboard-provisioning.yml', rstrip=False) }}"
+        dest: "{{ grafana_root }}/provisioning/dashboards/grafana-dashboard-provisioning.yml"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart grafana stack
+
+    - name: Copy Grafana dashboards
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.file', item.src, rstrip=False) }}"
+        dest: "{{ grafana_root }}/dashboards/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - { src: "../files/grafana/dashboards/app-observability.json", dest: "app-observability.json" }
+        - { src: "../files/grafana/dashboards/infrastructure-overview.json", dest: "infrastructure-overview.json" }
+        - { src: "../files/grafana/dashboards/k6-traceability.json", dest: "k6-traceability.json" }
+      notify: Restart grafana stack
+
+    - name: Render Grafana Docker Compose definition
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/grafana.compose.yml.j2') }}"
+        dest: "{{ grafana_compose_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart grafana stack
+
+    - name: Render Grafana systemd unit
+      ansible.builtin.copy:
+        content: "{{ lookup('ansible.builtin.template', '../templates/grafana.service.j2') }}"
+        dest: "/etc/systemd/system/{{ grafana_service_name }}.service"
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Restart grafana stack
+
+    - name: Apply pending Grafana changes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Ensure Grafana stack service is enabled and running
+      ansible.builtin.systemd:
+        name: "{{ grafana_service_name }}"
+        state: started
+        enabled: true
+
+    - name: Check Grafana stack systemd state
+      ansible.builtin.command: "systemctl is-active {{ grafana_service_name }}"
+      register: grafana_service_status
+      changed_when: false
+      become: false
+
+    - name: Verify Grafana service is active
+      ansible.builtin.assert:
+        that:
+          - grafana_service_status.stdout == 'active'
+        fail_msg: Grafana stack is not active on the monitoring node.
+
+    - name: Wait for Grafana API health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/health
+        method: GET
+        status_code: 200
+      register: grafana_health
+      retries: 20
+      delay: 5
+      until: grafana_health.status == 200
+      become: false
+
+    - name: Fetch provisioned Grafana datasource
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/datasources/name/Prometheus
+        method: GET
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+        return_content: true
+      register: grafana_datasource
+      retries: 20
+      delay: 5
+      until: grafana_datasource.json.uid == 'prometheus'
+      become: false
+
+    - name: Fetch provisioned Grafana dashboards
+      ansible.builtin.uri:
+        url: http://127.0.0.1:3000/api/search?query=
+        method: GET
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+        return_content: true
+      register: grafana_dashboards
+      retries: 20
+      delay: 5
+      until: (grafana_dashboards.json | selectattr('type', 'equalto', 'dash-db') | list | length) >= 3
+      become: false
+
+    - name: Verify Grafana provisioning results
+      ansible.builtin.assert:
+        that:
+          - grafana_datasource.json.uid == 'prometheus'
+          - (grafana_dashboards.json | selectattr('type', 'equalto', 'dash-db') | list | length) >= 3
+        fail_msg: Grafana datasource or dashboard provisioning is incomplete.
+      become: false

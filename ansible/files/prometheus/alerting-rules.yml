@@ -1,0 +1,44 @@
+groups:
+  - name: infrastructure
+    rules:
+      - alert: HighCPUUsage
+        expr: (100 - (avg by (instance, node) (rate(node_cpu_seconds_total{job="node_exporter", mode="idle"}[5m])) * 100)) > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: High CPU usage on {{ $labels.node }}
+          description: CPU usage has been above 80% for more than 5 minutes on {{ $labels.instance }}.
+
+      - alert: LowMemoryAvailable
+        expr: ((node_memory_MemAvailable_bytes{job="node_exporter"} / node_memory_MemTotal_bytes{job="node_exporter"}) * 100) < 20
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: Low memory on {{ $labels.node }}
+          description: Available memory is below 20% on {{ $labels.instance }}.
+
+  - name: application
+    rules:
+      - alert: HighResponseLatency
+        expr: histogram_quantile(0.95, sum by (le, instance, service) (rate(http_request_duration_seconds_bucket{job="application"}[5m]))) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          team: application
+        annotations:
+          summary: High p95 latency on {{ $labels.service }}
+          description: p95 request latency is above 200 ms for {{ $labels.instance }}.
+
+      - alert: HighErrorRate
+        expr: (sum by (instance, service) (rate(http_request_total{job="application", status_code=~"5.."}[5m])) / clamp_min(sum by (instance, service) (rate(http_request_total{job="application"}[5m])), 0.001)) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: application
+        annotations:
+          summary: High 5xx error rate on {{ $labels.service }}
+          description: Error rate is above 5% for {{ $labels.instance }} over the last 5 minutes.
