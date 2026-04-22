@@ -42,3 +42,25 @@ groups:
         annotations:
           summary: High 5xx error rate on {{ $labels.service }}
           description: Error rate is above 5% for {{ $labels.instance }} over the last 5 minutes.
+
+  - name: k6
+    rules:
+      - alert: K6HighRequestLatency
+        expr: histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le)) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+          team: performance
+        annotations:
+          summary: K6 p95 latency is high
+          description: K6 p95 request latency has been above 200 ms for more than 2 minutes.
+
+      - alert: K6HighFailureRate
+        expr: (sum(rate(k6_http_req_failed_total[1m])) / clamp_min(sum(rate(k6_http_reqs_total[1m])), 0.001)) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: performance
+        annotations:
+          summary: K6 failure rate is high
+          description: K6 request failure rate has been above 5% for more than 2 minutes.

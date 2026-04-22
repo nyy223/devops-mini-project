@@ -47,6 +47,10 @@
     - [Mapping Deliverables](#mapping-deliverables-1)
     - [Validasi Grafana](#validasi-grafana)
     - [Akses Grafana](#akses-grafana)
+  - [Load Testing dengan K6](#load-testing-dengan-k6)
+    - [Lokasi Skrip](#lokasi-skrip)
+    - [Cara Menjalankan](#cara-menjalankan)
+    - [Validasi Data Masuk ke Grafana](#validasi-data-masuk-ke-grafana)
   - [Troubleshooting](#troubleshooting)
     - [SSH: "Permission denied (publickey)"](#ssh-permission-denied-publickey)
     - [SSH: "Connection timed out"](#ssh-connection-timed-out)
@@ -515,6 +519,85 @@ ansible monitoring_node -m shell -a "curl -u admin:admin -fsS 'http://127.0.0.1:
 ![text](docs/screenshots/grafanaalertmanager.png) 
 
 ![text](docs/screenshots/grafanadashboard3.png)
+
+---
+
+## Load Testing dengan K6
+
+Section ini digunakan untuk menjalankan uji beban `1000 VU selama 5 menit` dan mengirim metrik k6 ke Prometheus agar bisa divisualisasikan di dashboard `k6-traceability`.
+
+### Lokasi Skrip
+
+- Skrip: `k6/load-test.js`
+- Karakteristik test:
+  - executor `constant-vus`
+  - `vus: 1000`
+  - `duration: 5m`
+  - endpoint mix: `/health`, `/api/users`, `/api/users/:id`, `/api/products`, `/api/products/:id`
+  - threshold default:
+    - `http_req_failed < 5%`
+    - `p95 http_req_duration < 200ms`
+    - `checks > 99%`
+
+### Cara Menjalankan
+
+Contoh eksekusi dari monitoring node:
+
+```bash
+cd ~/devops-mini-project
+
+# Jalankan load test dan kirim metrik ke Prometheus Remote Write
+BASE_URL=http://4.193.141.181:3001 \
+K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write \
+k6 run -o experimental-prometheus-rw k6/load-test.js
+```
+
+### Validasi Data Masuk ke Grafana
+
+Setelah test berjalan 1-2 menit, buka dashboard `K6 Traceability` di Grafana, lalu cek panel berikut:
+
+- `Active Virtual Users`
+- `K6 Request Rate`
+- `K6 P95 Latency`
+- `K6 Failure Rate`
+- `K6 Load vs Application CPU`
+
+Query Prometheus yang bisa dipakai untuk sanity check:
+
+```promql
+max(k6_vus)
+sum(rate(k6_http_reqs_total[1m]))
+histogram_quantile(0.95, sum(rate(k6_http_req_duration_seconds_bucket[1m])) by (le))
+```
+
+Catatan penting:
+
+- Threshold yang tampil di output `k6 run` adalah evaluasi lokal di runner k6.
+- Alertmanager hanya menerima alert dari rule Prometheus (`alerting-rules.yml`), bukan langsung dari threshold k6.
+- Project ini menambahkan rule khusus k6 (`K6HighRequestLatency` dan `K6HighFailureRate`) agar alert bisa dikirim ke Alertmanager saat load test.
+
+Cek status alert dari monitoring node:
+
+```bash
+# Alert state di Prometheus
+curl -fsS http://127.0.0.1:9090/api/v1/alerts | jq '.data.alerts[] | {name: .labels.alertname, state: .state, activeAt: .activeAt}'
+
+# Alert yang diterima Alertmanager
+curl -fsS http://127.0.0.1:9093/api/v2/alerts | jq '.[].labels.alertname'
+```
+
+Jika muncul error `got status code: 404` saat remote write, aktifkan receiver Prometheus lalu redeploy monitoring stack:
+
+```bash
+cd ~/devops-mini-project/ansible
+ansible-playbook playbooks/monitoring.yml
+```
+
+Quick check dari monitoring node:
+
+```bash
+docker logs prometheus 2>&1 | grep -i remote-write
+```
 
 ---
 
