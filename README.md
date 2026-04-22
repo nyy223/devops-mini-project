@@ -552,6 +552,10 @@ K6_PROMETHEUS_RW_SERVER_URL=http://127.0.0.1:9090/api/v1/write \
 k6 run -o experimental-prometheus-rw k6/load-test.js
 ```
 
+![alt text](docs/screenshots/k6testing.png)
+
+![alt text](docs/screenshots/grafanadashboard1.png)
+
 ### Validasi Data Masuk ke Grafana
 
 Setelah test berjalan 1-2 menit, buka dashboard `K6 Traceability` di Grafana, lalu cek panel berikut:
