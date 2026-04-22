@@ -151,6 +151,36 @@
           - monitoring_exporter_status.stdout == 'active'
         fail_msg: Monitoring stack or local Node Exporter is not active on the monitoring node.
 
+    - name: Reconcile monitoring compose runtime
+      ansible.builtin.command: docker compose up -d --remove-orphans
+      args:
+        chdir: "{{ monitoring_root }}"
+      register: monitoring_compose_up
+      changed_when: >
+        ('Creating' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+        or ('Created' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+        or ('Starting' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+        or ('Started' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+        or ('Recreating' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+        or ('Recreated' in ((monitoring_compose_up.stdout | default('')) ~ (monitoring_compose_up.stderr | default(''))))
+
+    - name: Inspect monitoring containers
+      ansible.builtin.command: "docker container inspect {{ item }}"
+      loop:
+        - prometheus
+        - alertmanager
+      register: monitoring_container_inspect
+      changed_when: false
+      failed_when: false
+
+    - name: Verify monitoring containers are running
+      ansible.builtin.assert:
+        that:
+          - item.rc == 0
+          - (item.stdout | from_json | first).State.Running
+        fail_msg: "{{ item.item }} container is not running after compose reconciliation."
+      loop: "{{ monitoring_container_inspect.results }}"
+
     - name: Wait for Prometheus health endpoint
       ansible.builtin.uri:
         url: http://127.0.0.1:9090/-/healthy
