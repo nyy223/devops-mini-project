@@ -6,10 +6,10 @@
   - [Struktur Inventory](#struktur-inventory)
   - [How to Run](#how-to-run)
   - [Apa yang Dilakukan Playbook](#apa-yang-dilakukan-playbook)
-    - [`playbook-dependencies.yml`](#playbook-dependenciesyml)
-    - [`playbook-app-deployment.yml`](#playbook-app-deploymentyml)
-    - [`playbook-monitoring-stack.yml`](#playbook-monitoring-stackyml)
-    - [`playbook-grafana-setup.yml`](#playbook-grafana-setupyml)
+    - [`playbooks/dependencies.yml`](#playbooksdependenciesyml)
+    - [`playbooks/app-deploy.yml`](#playbooksapp-deployyml)
+    - [`playbooks/monitoring.yml`](#playbooksmonitoringyml)
+    - [`playbooks/grafana.yml`](#playbooksgrafanayml)
   - [Testing](#testing)
   - [Prometheus \& Monitoring Configuration](#prometheus--monitoring-configuration)
     - [Scope Implementasi](#scope-implementasi)
@@ -115,7 +115,7 @@ ansible-playbook playbooks/grafana.yml
 
 ## Apa yang Dilakukan Playbook
 
-### `playbook-dependencies.yml`
+### `playbooks/dependencies.yml`
 
 - install Docker Engine
 - install Docker Compose plugin (`docker compose`)
@@ -123,7 +123,7 @@ ansible-playbook playbooks/grafana.yml
 - aktifkan service Docker
 - konfigurasi UFW sesuai kebutuhan tiap node
 
-### `playbook-app-deployment.yml`
+### `playbooks/app-deploy.yml`
 
 - install `prometheus-node-exporter`
 - buat Docker Compose file untuk image `trenttzzz/devops-app:latest`
@@ -133,9 +133,8 @@ ansible-playbook playbooks/grafana.yml
 - validasi `docker`, `devops-app`, dan `prometheus-node-exporter` dalam kondisi running
 - validasi endpoint `/health`, `/metrics`, dan Node Exporter metrics
 
-### `playbook-monitoring-stack.yml`
+### `playbooks/monitoring.yml`
 
-- implementasi saat ini ada di `playbooks/monitoring.yml`
 - install dan pastikan `prometheus-node-exporter` aktif di `monitoring_node`
 - copy `prometheus.yml`, `alerting-rules.yml`, dan `alertmanager.yml` ke `/opt/monitoring`
 - render Docker Compose + systemd unit untuk service `monitoring-stack`
@@ -143,9 +142,8 @@ ansible-playbook playbooks/grafana.yml
 - validasi endpoint health `/-/healthy` (Prometheus) dan `/-/ready` (Alertmanager)
 - validasi scrape target penting (`application`, `node_exporter`, `prometheus`) dalam status `up`
 
-### `playbook-grafana-setup.yml`
+### `playbooks/grafana.yml`
 
-- implementasi saat ini ada di `playbooks/grafana.yml`
 - siapkan direktori `/opt/grafana` untuk data, provisioning, dan dashboards
 - copy file datasource provisioning dan dashboard provisioning
 - seed 3 dashboard JSON:
@@ -165,7 +163,7 @@ ansible-playbook playbooks/monitoring.yml
 ansible-playbook playbooks/grafana.yml
 ```
 
-Playbook yang idempotent seharusnya berakhir dengan recap yang mendekati:
+Output:
 
 ```text
 changed=0
