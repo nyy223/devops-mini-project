@@ -114,9 +114,6 @@ Kedua VM menggunakan spesifikasi yang **identik**:
 
 ## Cara SSH ke VM
 
-File SSH key bernama `devops-project.pem` harus sudah kamu terima dari Person 3.
-Simpan file tersebut di folder yang mudah diingat, misalnya `~/.ssh/`.
-
 ### Set Permission File Key (wajib, hanya sekali)
 
 ```bash
