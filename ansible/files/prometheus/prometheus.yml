@@ -24,6 +24,15 @@ scrape_configs:
           node: monitoring-node
           role: monitoring
 
+  - job_name: alertmanager
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - localhost:9093
+        labels:
+          node: monitoring-node
+          role: monitoring
+
   - job_name: application
     scrape_interval: 10s
     metrics_path: /metrics
