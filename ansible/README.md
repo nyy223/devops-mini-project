@@ -246,6 +246,12 @@ ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:9090/-/healthy &
 ansible monitoring_node -m shell -a "curl -fsS http://127.0.0.1:9090/api/v1/targets | jq '.status'"
 ```
 
+Local port forwarding:
+
+```bash
+ssh -i devops-project.pem -L 9090:localhost:9090 azureuser@20.205.153.210
+```
+
 ![text](../docs/screenshots/image3.png) 
 
 ![text](../docs/screenshots/image4.png) 
